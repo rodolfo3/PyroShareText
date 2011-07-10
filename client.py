@@ -20,13 +20,15 @@ class ClientGui(object):
     def __init__(self):
         gui = gtk.glade.XML(self.GLADE_FILE)
         window = gui.get_widget("MainWindow")
-        window.connect("destroy", gtk.main_quit)
+        window.connect("destroy", self.quit)
         text_box = gui.get_widget("TextBox")
 
         window.show()
 
         text_box.connect('key-press-event', self.key_press)
         text_box.connect('key-release-event', self.key_release)
+
+        self._text_box = text_box
 
     def _event_key_abort(self, event):
         event.keyval = 0
@@ -52,9 +54,13 @@ class ClientGui(object):
     def key_release(self, widget, event):
         pass
 
+    def quit(self, window):
+        gtk.main_quit(window)
+
     def run(self):
         gtk.main()
 
+from threading import Timer
 class Client(ClientGui):
     '''
     Client x Server methods
@@ -70,7 +76,26 @@ class Client(ClientGui):
         self._uid = server.register_client()
         self._server = server
         self._opened_document = None
+        self._timer = None
         super(Client, self).__init__()
+
+    def update(self, line):
+        server = self._server
+        buff = self._text_box.get_buffer()
+        cursor_pos = buff.get_property('cursor-position')
+        # get text of the line
+        initial = buff.get_iter_at_line(line)
+        final = buff.get_iter_at_offset(cursor_pos)
+        text = buff.get_text(initial, final).strip()
+        print 'line=%s, text=%s' % (line, repr(text))
+        server.write_document(self._uid, self._opened_document, line, text)
+
+    def _timer_update(self, line):
+        if self._timer:
+            self._timer.cancel()
+        timer = Timer(interval=1, function=self.update, args=[line])
+        timer.start()
+        self._timer = timer
 
     def new_document(self):
         '''
@@ -92,14 +117,36 @@ class Client(ClientGui):
         '''
         Flush document and release internal refs
         '''
+        args = []
+        if self._timer:
+            self._timer.cancel()
+            args = self._timer.args
+            self._timer = None
+            self.update(*args)
+
+        self._server.close_document(self._uid, self._opened_document)
         self._opened_document = None
 
     def can_edit(self, line):
         server = self._server
         lock = server.lock_document(self._uid, self._opened_document, line)
-        print lock
         return lock
 
+    def key_release(self, widget, event):
+        '''
+        Wait same seconds and update!
+        '''
+        super(Client, self).key_release(widget, event)
+        line = self._get_cursor_row(widget)
+        if gtk.gdk.keyval_name(event.keyval) == 'Return':
+            self.update(line-1) # if create a new line, update a line immediatly
+        else:
+            self._timer_update(line)
+
+    def quit(self, *args):
+        if self._opened_document:
+            self.close_document()
+        super(Client, self).quit(*args)
 
 if __name__ == '__main__':
     import sys

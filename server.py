@@ -21,6 +21,8 @@ class Lock:
         return self._client_uid == client_uid
 
 class Document(object):
+    PATH = '/tmp/docs'
+
     class DoesNotExist(Exception): # cannot find a document
         pass
 
@@ -35,6 +37,12 @@ class Document(object):
     def set_rows(self, rows):
         self._lock_rows = [None] * len(rows)
         self._rows = list(rows)
+
+    def write_file(self):
+        filename = '%s/%s' % (self.PATH, self._uid)
+        file_ = file(filename, 'w')
+        file_.write('\n'.join(self._rows))
+        file_.close()
 
     def get_rows(self):
         return self._rows
@@ -56,6 +64,10 @@ class Document(object):
             all_lock_rows[:row] + lock_rows + all_lock_rows[row+1:]
 
     def lock(self, client_uid, row):
+        if row >= len(self._rows):
+            self._lock_rows.append(None)
+            self._rows.append('')
+
         if self._lock_rows[row] is not None and \
                 self._lock_rows[row]._client_uid != client_uid:
             raise self.LockDenied()
@@ -104,10 +116,15 @@ class Server(object):
         return document_uid
 
     def write_document(self, client_uid, document_uid, row, text):
+        LOG.debug('writing %s by %s: %s' % (document_uid, client_uid, text))
         document = self._get_document(document_uid)
         document.write(row, text)
         document.unlock(client_uid, row)
         return document_uid
+
+    def close_document(self, client_uid, document_uid):
+        document = self._get_document(document_uid)
+        document.write_file()
 
     def lock_document(self, client_uid, document_uid, row):
         document = self._get_document(document_uid)
