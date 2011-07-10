@@ -15,7 +15,7 @@ class Lock:
     def can_unlock(self, client_uid):
         return self._client_uid == client_uid
 
-class Document:
+class Document(object):
     class DoesNotExist(Exception): # cannot find a document
         pass
 
@@ -24,16 +24,26 @@ class Document:
 
     def __init__(self, uid):
         self._uid = uid
-        self.rows = []
+        self._rows = []
         self._lock_rows = []
+
+    def set_rows(self, rows):
+        self._lock_rows = [None] * len(rows)
+        self._rows = list(rows)
+
+    def get_rows(self):
+        return self._rows
+
+    # property - just to external use
+    rows = property(get_rows, set_rows)
 
     def write(self, row, text):
         rows = text.strip().split('\n')
         lock_rows = [None] * len(rows) # new lines are unlocked
 
         # replace 1 line and add in the middle, if needed
-        all_rows = self.rows
-        self.rows = all_rows[:row] + rows + all_rows[row+1:]
+        all_rows = self._rows
+        self._rows = all_rows[:row] + rows + all_rows[row+1:]
 
         # do tha same to locks
         all_lock_rows = self._lock_rows

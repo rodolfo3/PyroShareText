@@ -69,6 +69,7 @@ class TestDocument(unittest.TestCase):
     def setUp(self):
         server = Server()
         self.client0 = server.register_client()
+        self.client1 = server.register_client()
         self.document = Document('uid')
 
     def test_write(self):
@@ -100,6 +101,27 @@ class TestDocument(unittest.TestCase):
 
         document.write(row=2, text='r2\nr3')
         self.assertEqual(document.rows, ['r0', 'r1', 'r2', 'r3', 'r4'])
+
+
+    def test_lock_write(self):
+        '''
+        When write more than 1 line in the middle of the document, the locks
+        in botton of the new paragraphs need to be moved
+        '''
+        client0 = self.client0
+        client1 = self.client1
+        document = self.document
+        document.rows = ['r0', 'r1', 'r4', 'r4']
+
+        document.lock(client0, 3)
+        document.write(row=2, text='r2\nr3')
+
+        # 1 line changed, 1 line added = +1 in the lock line
+        try:
+            document.lock(client1, 4)
+            self.failIf(True)
+        except Document.LockDenied:
+            pass # ok
 
 
 class TestDocumentEdit(unittest.TestCase):
