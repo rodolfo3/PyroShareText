@@ -29,12 +29,18 @@ class TestServerDocument(unittest.TestCase):
         self.client1 = server.register_client()
 
     def test_new_document(self):
+        '''
+        Create a new document
+        '''
         server = self.server
         client0 = self.client0
         document0 = server.new_document(client0)
         self.assertTrue(document0 in server._documents)
 
     def test_open_document(self):
+        '''
+        Open a document
+        '''
         server = self.server
         client0 = self.client0
         client1 = self.client1
@@ -46,6 +52,9 @@ class TestServerDocument(unittest.TestCase):
         self.assertEqual(len(server._documents.keys()), 1)
 
     def test_open_document_error(self):
+        '''
+        Open a inexistent document
+        '''
         server = self.server
         client0 = self.client0
         client1 = self.client1
@@ -57,6 +66,9 @@ class TestServerDocument(unittest.TestCase):
             pass
 
     def test_document_write(self):
+        '''
+        Write in a document using the server interface
+        '''
         server = self.server
         client0 = self.client0
         document0 = server.new_document(client0)
@@ -73,12 +85,18 @@ class TestDocument(unittest.TestCase):
         self.document = Document('uid')
 
     def test_write(self):
+        '''
+        Write into a document
+        '''
         client0 = self.client0
         document = self.document
         document.write(row=0, text='row 000\nrow 001')
         self.assertEqual(document.rows, ['row 000', 'row 001'])
 
     def test_second_write(self):
+        '''
+        2 sequencial writes
+        '''
         client0 = self.client0
         document = self.document
         document.rows = ['row 000', 'row 001']
@@ -87,6 +105,9 @@ class TestDocument(unittest.TestCase):
             ['row 000', 'row 001', 'row 002', 'row 003'])
 
     def test_write_replace(self):
+        '''
+        Overwrite 1 line
+        '''
         client0 = self.client0
         document = self.document
         document.rows = ['row 000', 'row 001']
@@ -95,6 +116,9 @@ class TestDocument(unittest.TestCase):
         self.assertEqual(document.rows, ['r0', 'row 001'])
 
     def test_write_addline(self):
+        '''
+        Write 2 lines, adding a new paragraph
+        '''
         client0 = self.client0
         document = self.document
         document.rows = ['r0', 'r1', 'r4', 'r4']
@@ -147,6 +171,9 @@ class TestDocumentEdit(unittest.TestCase):
         self.document = document0
 
     def test_edit_different_paragraphs(self):
+        '''
+        Lock different paragraphs to update, by 2 different users
+        '''
         server = self.server
         client0 = self.client0
         client1 = self.client1
@@ -162,6 +189,9 @@ class TestDocumentEdit(unittest.TestCase):
         server.lock_document(client0, document0, 1) # ok, no exception
 
     def test_edit_same_paragraph(self):
+        '''
+        2 users try to edit the same paragraph, at same time
+        '''
         server = self.server
         client0 = self.client0
         client1 = self.client1
