@@ -8,6 +8,13 @@ VERBOSE = True
 
 import uuid
 
+class Lock:
+    def __init__(self, client_uid):
+        self._client_uid = client_uid
+
+    def can_unlock(self, client_uid):
+        return self._client_uid == client_uid
+
 class Document:
     class DoesNotExist(Exception): # cannot find a document
         pass
@@ -18,21 +25,33 @@ class Document:
     def __init__(self, uid):
         self._uid = uid
         self.rows = []
+        self._lock_rows = []
 
     def write(self, row, text):
         rows = text.strip().split('\n')
-        if len(self.rows) <= row:
-            self.rows.extend(rows)
-        else:
-            all_rows = self.rows
-            # replace 1 line and add in the middle
-            self.rows = all_rows[:row] + rows + all_rows[row+1:]
+        lock_rows = [None] * len(rows) # new lines are unlocked
+
+        # replace 1 line and add in the middle, if needed
+        all_rows = self.rows
+        self.rows = all_rows[:row] + rows + all_rows[row+1:]
+
+        # do tha same to locks
+        all_lock_rows = self._lock_rows
+        self._lock_rows = \
+            all_lock_rows[:row] + lock_rows + all_lock_rows[row+1:]
 
     def lock(self, client_uid, row):
-        pass
+        if self._lock_rows[row] is not None:
+            raise self.LockDenied()
+        self._lock_rows[row] = Lock(client_uid)
 
     def unlock(self, client_uid, row):
-        pass
+        if self._lock_rows[row] is None:
+            # no lock?! ok, just write - no one care
+            return True
+        if not self._lock_rows[row].can_unlock(client_uid):
+            assert False
+        self._lock_rows[row] = None
 
 class Server(object):
 

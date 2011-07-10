@@ -139,6 +139,18 @@ class TestDocumentEdit(unittest.TestCase):
         # write clear the lock, let's check
         server.lock_document(client0, document0, 1) # ok, no exception
 
+    def test_edit_same_paragraph(self):
+        server = self.server
+        client0 = self.client0
+        client1 = self.client1
+        document0 = self.document
+
+        server.lock_document(client0, document0, 0) # lock document0, row 0
+        try:
+            server.lock_document(client1, document0, 0) # lock document0, row 0
+            self.failIf(True)
+        except Document.LockDenied:
+            pass # ok
 
 if __name__ == '__main__':
     unittest.main()
