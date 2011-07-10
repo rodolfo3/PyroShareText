@@ -8,6 +8,11 @@ VERBOSE = True
 
 import uuid
 
+# to LOG
+import logging
+import sys
+LOG = logging.Logger(name="server")
+
 class Lock:
     def __init__(self, client_uid):
         self._client_uid = client_uid
@@ -24,8 +29,8 @@ class Document(object):
 
     def __init__(self, uid):
         self._uid = uid
-        self._rows = []
-        self._lock_rows = []
+        self._rows = ['']
+        self._lock_rows = [None]
 
     def set_rows(self, rows):
         self._lock_rows = [None] * len(rows)
@@ -51,8 +56,11 @@ class Document(object):
             all_lock_rows[:row] + lock_rows + all_lock_rows[row+1:]
 
     def lock(self, client_uid, row):
-        if self._lock_rows[row] is not None:
+        if self._lock_rows[row] is not None and \
+                self._lock_rows[row]._client_uid != client_uid:
             raise self.LockDenied()
+
+        # update the lock
         self._lock_rows[row] = Lock(client_uid)
 
     def unlock(self, client_uid, row):
@@ -79,11 +87,16 @@ class Server(object):
     def _get_document(self, uid):
         if uid in self._documents:
             return self._documents[uid]
+        print self._documents, repr(uid)
         raise Document.DoesNotExist()
 
     def new_document(self, client_uid):
         document_uid = u'D%s' % uuid.uuid4()
         self._documents[document_uid] = Document(document_uid)
+        LOG.debug("New document: %s (by %s)" % (
+                document_uid,
+                client_uid,
+            ))
         return document_uid
 
     def open_document(self, client_uid, document_uid):
@@ -98,14 +111,21 @@ class Server(object):
 
     def lock_document(self, client_uid, document_uid, row):
         document = self._get_document(document_uid)
-        document.lock(client_uid, row)
+        try:
+            document.lock(client_uid, row)
+        except Exception, eee:
+            return False
+        return True
 
 
 if __name__ == '__main__':
     import Pyro4
     daemon = Pyro4.Daemon(host=HOST, port=PORT)
     server = Server()
+    LOG.addHandler(logging.StreamHandler(sys.stdout))
+
     Pyro4.Daemon.serveSimple({
             server: 'documents.server',
         }, daemon=daemon, ns=False, verbose=VERBOSE)
-
+else:
+    LOG.addHandler(logging.NullHandler())

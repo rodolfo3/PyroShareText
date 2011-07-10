@@ -198,11 +198,24 @@ class TestDocumentEdit(unittest.TestCase):
         document0 = self.document
 
         server.lock_document(client0, document0, 0) # lock document0, row 0
-        try:
-            server.lock_document(client1, document0, 0) # lock document0, row 0
-            self.failIf(True)
-        except Document.LockDenied:
-            pass # ok
+        self.failIf(
+            # lock document0, row 0
+            server.lock_document(client1, document0, 0)
+        )
+
+    def test_edit_same_paragraph_same_user(self):
+        '''
+        1 users try to get 2x the same paragraph
+        '''
+        server = self.server
+        client0 = self.client0
+        document0 = self.document
+
+        server.lock_document(client0, document0, 0) # lock document0, row 0
+        self.assertTrue(
+            # lock document0, row 0
+            server.lock_document(client0, document0, 0)
+        )
 
 if __name__ == '__main__':
     unittest.main()
