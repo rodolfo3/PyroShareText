@@ -8,8 +8,16 @@ import Pyro4
 # gui
 import gtk, gtk.glade
 
+# log
+import logging
+import sys
+LOG = logging.Logger(name="server")
+## LOG.level = logging.CRITICAL # omit debug()
+
+
 class LockDenied(Exception):
     pass
+
 
 class ClientGui(object):
     '''
@@ -48,11 +56,11 @@ class ClientGui(object):
 
     def key_press(self, widget, event):
         line = self._get_cursor_row(widget)
-        if not self.can_edit(line):
+        if not self.typing(line):
             self._event_key_abort(event)
 
     def key_release(self, widget, event):
-        pass
+        pass # overwrite this
 
     def quit(self, window):
         gtk.main_quit(window)
@@ -61,6 +69,8 @@ class ClientGui(object):
         gtk.main()
 
 from threading import Timer
+from threading import Thread
+
 class Client(ClientGui):
     '''
     Client x Server methods
@@ -79,21 +89,20 @@ class Client(ClientGui):
         self._timer = None
         super(Client, self).__init__()
 
-    def update(self, line):
-        server = self._server
-        buff = self._text_box.get_buffer()
-        cursor_pos = buff.get_property('cursor-position')
-        # get text of the line
-        initial = buff.get_iter_at_line(line)
-        final = buff.get_iter_at_offset(cursor_pos)
-        text = buff.get_text(initial, final).strip()
-        print 'line=%s, text=%s' % (line, repr(text))
-        server.write_document(self._uid, self._opened_document, line, text)
+    def _get_buffer(self):
+        return self._text_box.get_buffer()
 
-    def _timer_update(self, line):
+    def _get_text(self, line):
+        buff = self._get_buffer()
+        initial = buff.get_iter_at_line(line)
+        final = buff.get_iter_at_line(line+1)
+        return buff.get_text(initial, final)
+
+    def _timer_update_row(self, line):
+        LOG.debug('Waiting to send row %i to server...' % line)
         if self._timer:
             self._timer.cancel()
-        timer = Timer(interval=1, function=self.update, args=[line])
+        timer = Timer(interval=1, function=self.update_row, args=[line])
         timer.start()
         self._timer = timer
 
@@ -113,24 +122,56 @@ class Client(ClientGui):
         document_uid = server.open_document(self._uid, document_uid)
         self._opened_document = document_uid
 
+        # load document content
+        buff = self._get_buffer()
+        all_text = []
+        for i in xrange(server.get_document_row_count(self._uid, document_uid)):
+            text = \
+                server.get_document_row(self._uid, self._opened_document, i)
+            all_text.append(text)
+        buff.set_text('\n'.join(all_text))
+
+    def typing(self, line):
+        '''
+        Verify if user can edit current line in the buffer
+        Create a lock if user can edit
+        '''
+        LOG.debug('Typing...')
+        server = self._server
+        lock = server.lock_document(self._uid, self._opened_document, line)
+        print '>>', lock
+        return lock
+
+    def update_row(self, line):
+        '''
+        Update a line into a server
+        '''
+        LOG.debug('Sending row %i to server...' % line)
+        server = self._server
+        text = self._get_text(line)
+        doc_id = server.write_document(self._uid, self._opened_document, line, \
+            text)
+
+    def release_lock(self, line):
+        '''
+        Release lock into the server
+        '''
+        LOG.debug('Sending unlock row %i to server...' % line)
+        server = self._server
+        server.unlock_document(self._uid, self._opened_document, line)
+
     def close_document(self):
         '''
         Flush document and release internal refs
         '''
-        args = []
         if self._timer:
             self._timer.cancel()
             args = self._timer.args
             self._timer = None
-            self.update(*args)
+            ### self.update_row(*args)
 
         self._server.close_document(self._uid, self._opened_document)
         self._opened_document = None
-
-    def can_edit(self, line):
-        server = self._server
-        lock = server.lock_document(self._uid, self._opened_document, line)
-        return lock
 
     def key_release(self, widget, event):
         '''
@@ -138,10 +179,14 @@ class Client(ClientGui):
         '''
         super(Client, self).key_release(widget, event)
         line = self._get_cursor_row(widget)
+
         if gtk.gdk.keyval_name(event.keyval) == 'Return':
-            self.update(line-1) # if create a new line, update a line immediatly
+            # if create a new line, update a line immediatly and release a lock
+            self.update_row(line-1)
+            self.release_lock(line-1)
         else:
-            self._timer_update(line)
+            self._timer_update_row(line)
+
 
     def quit(self, *args):
         if self._opened_document:
@@ -151,6 +196,7 @@ class Client(ClientGui):
 if __name__ == '__main__':
     import sys
     args = sys.argv[1:]
+    LOG.addHandler(logging.StreamHandler(sys.stdout))
 
     client = Client()
     if args and args[0]:
@@ -159,3 +205,5 @@ if __name__ == '__main__':
     else:
         client.new_document()
     client.run()
+else:
+     LOG.addHandler(logging.NullHandler()) # run tests

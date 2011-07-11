@@ -12,6 +12,7 @@ import uuid
 import logging
 import sys
 LOG = logging.Logger(name="server")
+## LOG.level = logging.CRITICAL # omit debug()
 
 class Lock:
     def __init__(self, client_uid):
@@ -51,8 +52,13 @@ class Document(object):
     rows = property(get_rows, set_rows)
 
     def write(self, row, text):
+        LOG.debug('writing %s' % repr(text))
+        LOG.debug('*'*80)
+        LOG.debug('Lock before write')
+        LOG.debug(unicode(self._lock_rows))
+
         rows = text.strip().split('\n')
-        lock_rows = [None] * len(rows) # new lines are unlocked
+        lock_rows = [None] * (len(rows)-1) # new lines are unlocked
 
         # replace 1 line and add in the middle, if needed
         all_rows = self._rows
@@ -61,23 +67,38 @@ class Document(object):
         # do tha same to locks
         all_lock_rows = self._lock_rows
         self._lock_rows = \
-            all_lock_rows[:row] + lock_rows + all_lock_rows[row+1:]
+            all_lock_rows[:row] + lock_rows + all_lock_rows[row:]
+
+        LOG.debug('Lock after write')
+        LOG.debug(unicode(self._lock_rows))
+        LOG.debug('*'*80)
 
     def lock(self, client_uid, row):
-        if row >= len(self._rows):
+        if len(self._lock_rows) <= row:
+            # if create a new line, lock it
             self._lock_rows.append(None)
-            self._rows.append('')
 
         if self._lock_rows[row] is not None and \
-                self._lock_rows[row]._client_uid != client_uid:
+                not self._lock_rows[row].can_unlock(client_uid):
+            LOG.debug("client %s try to replace a lock by %s" % (
+                    client_uid, self._lock_rows[row]._client_uid,
+                ))
             raise self.LockDenied()
 
         # update the lock
+        if self._lock_rows[row]:
+            LOG.debug('Update lock line %i from %s to %s' % (
+                    row,
+                    self._lock_rows[row]._client_uid,
+                    client_uid,))
+        else:
+            LOG.debug('Lock line %i' % row)
+        LOG.debug(unicode(self._lock_rows))
         self._lock_rows[row] = Lock(client_uid)
 
     def unlock(self, client_uid, row):
         if self._lock_rows[row] is None:
-            # no lock?! ok, just write - no one care
+            # no lock?! ok, no one care
             return True
         if not self._lock_rows[row].can_unlock(client_uid):
             assert False
@@ -99,7 +120,10 @@ class Server(object):
     def _get_document(self, uid):
         if uid in self._documents:
             return self._documents[uid]
-        print self._documents, repr(uid)
+        LOG.warning("Trying to open a nonexistent %s document (%s)" % (
+                uid,
+                self._documents.keys(),
+            ))
         raise Document.DoesNotExist()
 
     def new_document(self, client_uid):
@@ -109,30 +133,59 @@ class Server(object):
                 document_uid,
                 client_uid,
             ))
+        LOG.debug('Document %s created!' % document_uid)
         return document_uid
 
     def open_document(self, client_uid, document_uid):
+        LOG.debug('Client %s open document %s' % (
+            client_uid, document_uid))
         document = self._get_document(document_uid)
-        return document_uid
-
-    def write_document(self, client_uid, document_uid, row, text):
-        LOG.debug('writing %s by %s: %s' % (document_uid, client_uid, text))
-        document = self._get_document(document_uid)
-        document.write(row, text)
-        document.unlock(client_uid, row)
         return document_uid
 
     def close_document(self, client_uid, document_uid):
         document = self._get_document(document_uid)
         document.write_file()
+        LOG.debug('Document %s closed' % document_uid)
+
+    def unlock_document(self, client_uid, document_uid, row):
+        LOG.debug('try unlock %s(%s) by %s' % (document_uid, row, client_uid))
+        document = self._get_document(document_uid)
+        try:
+            document.unlock(client_uid, row)
+            LOG.debug('unlocked')
+        except Document.LockDenied:
+            LOG.debug('unlock denied!')
+            return False
+        return False
 
     def lock_document(self, client_uid, document_uid, row):
+        LOG.debug('try lock %s(%s) by %s' % (document_uid, row, client_uid))
         document = self._get_document(document_uid)
         try:
             document.lock(client_uid, row)
-        except Exception, eee:
+            LOG.debug('locked')
+        except Document.LockDenied:
+            LOG.debug('locked denied!')
             return False
         return True
+
+    def write_document(self, client_uid, document_uid, row, text):
+        LOG.debug('writing %s by %s: %s' % (document_uid, client_uid, text))
+        document = self._get_document(document_uid)
+        document.write(row, text)
+        return document_uid
+
+    def get_document_row_count(self, client_uid, document_uid):
+        LOG.debug('Client %s request %s row count' % (
+            client_uid, document_uid))
+        document = self._get_document(document_uid)
+        return len(document.rows)
+
+    def get_document_row(self, client_uid, document_uid, row):
+        LOG.debug('Client %s request %s row of %s' % (
+            client_uid, document_uid, row))
+        document = self._get_document(document_uid)
+        return document.rows[row]
 
 
 if __name__ == '__main__':
@@ -145,4 +198,4 @@ if __name__ == '__main__':
             server: 'documents.server',
         }, daemon=daemon, ns=False, verbose=VERBOSE)
 else:
-    LOG.addHandler(logging.NullHandler())
+    LOG.addHandler(logging.NullHandler()) # run tests'
