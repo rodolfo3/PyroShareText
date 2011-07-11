@@ -35,8 +35,16 @@ class ClientGui(object):
 
         text_box.connect('key-press-event', self.key_press)
         text_box.connect('key-release-event', self.key_release)
+        text_box.connect('move-cursor', self.move_cursor)
 
         self._text_box = text_box
+
+    def move_cursor(self, widget, event, direction, shift):
+        '''
+        Unlock when change line
+        '''
+        if event.value_name == 'GTK_MOVEMENT_DISPLAY_LINES':
+            self.change_row()
 
     def _event_key_abort(self, event):
         event.keyval = 0
@@ -56,11 +64,13 @@ class ClientGui(object):
 
     def key_press(self, widget, event):
         line = self._get_cursor_row(widget)
-        if not self.typing(line):
+        # just ASCII
+        if event.keyval >= 32 and event.keyval <= 128 and \
+                not self.typing(line):
             self._event_key_abort(event)
 
     def key_release(self, widget, event):
-        pass # overwrite this
+        pass # to overwrite
 
     def quit(self, window):
         gtk.main_quit(window)
@@ -87,6 +97,8 @@ class Client(ClientGui):
         self._server = server
         self._opened_document = None
         self._timer = None
+
+        self._edit_line = None
         super(Client, self).__init__()
 
     def _get_buffer(self):
@@ -95,7 +107,10 @@ class Client(ClientGui):
     def _get_text(self, line):
         buff = self._get_buffer()
         initial = buff.get_iter_at_line(line)
-        final = buff.get_iter_at_line(line+1)
+        if line+1 >= buff.get_line_count():
+            final = buff.get_end_iter()
+        else:
+            final = buff.get_iter_at_line(line+1)
         return buff.get_text(initial, final)
 
     def _timer_update_row(self, line):
@@ -136,10 +151,12 @@ class Client(ClientGui):
         Verify if user can edit current line in the buffer
         Create a lock if user can edit
         '''
-        LOG.debug('Typing...')
         server = self._server
         lock = server.lock_document(self._uid, self._opened_document, line)
-        print '>>', lock
+        if lock:
+            self._edit_line = line
+        else:
+            LOG.debug('Unable to get a lock into line %i' % line)
         return lock
 
     def update_row(self, line):
@@ -149,8 +166,10 @@ class Client(ClientGui):
         LOG.debug('Sending row %i to server...' % line)
         server = self._server
         text = self._get_text(line)
+        LOG.debug(repr(text))
         doc_id = server.write_document(self._uid, self._opened_document, line, \
             text)
+        self._edit_line = None
 
     def release_lock(self, line):
         '''
@@ -164,11 +183,12 @@ class Client(ClientGui):
         '''
         Flush document and release internal refs
         '''
+        if self._edit_line:
+            self.update_row(self._edit_line)
+
         if self._timer:
-            self._timer.cancel()
-            args = self._timer.args
-            self._timer = None
-            ### self.update_row(*args)
+            timer = self._timer
+            timer.cancel()
 
         self._server.close_document(self._uid, self._opened_document)
         self._opened_document = None
@@ -184,9 +204,18 @@ class Client(ClientGui):
             # if create a new line, update a line immediatly and release a lock
             self.update_row(line-1)
             self.release_lock(line-1)
+        elif event.keyval >= 32 and event.keyval <= 128: # just ASCII
+            if self._edit_line:
+                self._timer_update_row(line)
         else:
-            self._timer_update_row(line)
+            pass
+            # do not send "ivisible" keys
 
+    def change_row(self):
+        line = self._edit_line
+        if line:
+            self.update_row(line)
+            self.release_lock(line)
 
     def quit(self, *args):
         if self._opened_document:
