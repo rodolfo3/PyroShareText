@@ -6,7 +6,7 @@ A client
 import Pyro4
 
 # gui
-import gtk, gtk.glade
+import gtk, gtk.glade, gobject
 
 # log
 import logging
@@ -37,7 +37,12 @@ class ClientGui(object):
         text_box.connect('key-release-event', self.key_release)
         text_box.connect('move-cursor', self.move_cursor)
 
+        self._gui = gui
         self._text_box = text_box
+
+    def set_title(self, text):
+        window = self._gui.get_widget("MainWindow")
+        window.set_title(text)
 
     def move_cursor(self, widget, event, direction, shift):
         '''
@@ -65,8 +70,7 @@ class ClientGui(object):
     def key_press(self, widget, event):
         line = self._get_cursor_row(widget)
         # just ASCII
-        if event.keyval >= 32 and event.keyval <= 128 and \
-                not self.typing(line):
+        if event.keyval <= 128 and not self.typing(line):
             self._event_key_abort(event)
 
     def key_release(self, widget, event):
@@ -76,10 +80,9 @@ class ClientGui(object):
         gtk.main_quit(window)
 
     def run(self):
-        gtk.main()
+        gtk.mainloop()
 
 from threading import Timer
-from threading import Thread
 
 class Client(ClientGui):
     '''
@@ -101,16 +104,55 @@ class Client(ClientGui):
         self._edit_line = None
         super(Client, self).__init__()
 
+        # thread to update document
+        self._install_worker_to_update()
+        self.set_title(self._uid)
+
+    def _install_worker_to_update(self):
+        gobject.timeout_add(5000, self._update_from_server, \
+            priority=gobject.PRIORITY_HIGH_IDLE)
+
+    def _update_from_server(self):
+        if self._opened_document is None:
+            LOG.critical("No opened document")
+            return
+
+        # http://www.pardon-sleeuwaegen.be/antoon/python/page1.html
+        gtk.gdk.threads_enter()
+
+        server = self._server
+        rows = server.list_changed_lines(self._uid, self._opened_document)
+
+        try:
+            for row in rows:
+                text = server.get_document_row(self._uid, \
+                    self._opened_document, row).strip()
+                self.refresh_row(row, text)
+
+        except Exception, exp:
+            LOG.warning("Error refreshing lines! %s" % exp)
+
+        gtk.gdk.threads_leave()
+
+        # do it again
+        self._install_worker_to_update()
+
     def _get_buffer(self):
         return self._text_box.get_buffer()
 
-    def _get_text(self, line):
+    def _get_line_iter(self, line):
         buff = self._get_buffer()
         initial = buff.get_iter_at_line(line)
         if line+1 >= buff.get_line_count():
             final = buff.get_end_iter()
         else:
             final = buff.get_iter_at_line(line+1)
+            final.backward_char() # the "\n" at the end
+        return initial, final
+
+    def _get_text(self, line):
+        buff = self._get_buffer()
+        initial, final = self._get_line_iter(line)
         return buff.get_text(initial, final)
 
     def _timer_update_row(self, line):
@@ -152,12 +194,32 @@ class Client(ClientGui):
         Create a lock if user can edit
         '''
         server = self._server
+        print 'LOCK', line
         lock = server.lock_document(self._uid, self._opened_document, line)
         if lock:
             self._edit_line = line
         else:
             LOG.debug('Unable to get a lock into line %i' % line)
         return lock
+
+    def refresh_row(self, line, text):
+        '''
+        Recieve a row from server and update into the GUI
+        '''
+        # FIXME find a better way to o this
+        LOG.debug('Refresh line %i with %s' % (
+            line, repr(text)))
+        try:
+            buff = self._get_buffer()
+            initial, final = self._get_line_iter(line)
+            final.forward_char()
+            buff.delete(initial, final)
+            buff.insert(initial, "%s\n" % text)
+            # LOG.debug("Replace %s by %s" % (
+            #    repr(self._get_text(line)), repr(text)))
+        except Exception, e:
+            print e
+        LOG.debug("Refresh ok!")
 
     def update_row(self, line):
         '''
@@ -177,13 +239,22 @@ class Client(ClientGui):
         '''
         LOG.debug('Sending unlock row %i to server...' % line)
         server = self._server
+        local_text = self._get_text(line)
+        server_text = server.get_document_row(self._uid, \
+                        self._opened_document, line)
+        while server_text.strip() != local_text.strip():
+            self.update_row(line)
+            LOG.warning("Re-update row %i into the server" % line)
+            import time
+            time.sleep(1)
+
         server.unlock_document(self._uid, self._opened_document, line)
 
     def close_document(self):
         '''
         Flush document and release internal refs
         '''
-        if self._edit_line:
+        if self._edit_line is not None:
             self.update_row(self._edit_line)
 
         if self._timer:
@@ -200,20 +271,22 @@ class Client(ClientGui):
         super(Client, self).key_release(widget, event)
         line = self._get_cursor_row(widget)
 
-        if gtk.gdk.keyval_name(event.keyval) == 'Return':
-            # if create a new line, update a line immediatly and release a lock
+        event_name = gtk.gdk.keyval_name(event.keyval)
+        if event_name == 'Return':
+            # if create a new line, update a line immediatly
+            # and release a lock
             self.update_row(line-1)
             self.release_lock(line-1)
-        elif event.keyval >= 32 and event.keyval <= 128: # just ASCII
-            if self._edit_line:
-                self._timer_update_row(line)
+        elif event.keyval <= 128 or event_name in ('BackSpace', 'Delete'):
+            # just ASCII or delete
+            self._timer_update_row(line)
         else:
             pass
             # do not send "ivisible" keys
 
     def change_row(self):
         line = self._edit_line
-        if line:
+        if line is not None:
             self.update_row(line)
             self.release_lock(line)
 

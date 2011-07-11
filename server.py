@@ -60,7 +60,9 @@ class Document(object):
 
         # replace 1 line and add in the middle, if needed
         all_rows = self._rows
+        print "***", all_rows
         self._rows = all_rows[:row] + rows + all_rows[row+1:]
+        print '###', self._rows
 
         # do tha same to locks
         all_lock_rows = self._lock_rows
@@ -111,6 +113,11 @@ class Document(object):
             if self._lock_rows[row] and \
                     self._lock_rows[row].can_unlock(client_uid):
                 self.unlock(client_uid, row)
+
+    def is_locked_by(self, client_uid, row):
+        if self._lock_rows[row] is None:
+            return False
+        return self._lock_rows[row]._client_uid == client_uid
 
 
 class Server(object):
@@ -200,6 +207,12 @@ class Server(object):
         LOG.debug(repr(document.rows[row]))
         return document.rows[row]
 
+    def list_changed_lines(self, client_uid, document_uid):
+        ## LOG.debug("Client %s requested changes of %s" % (
+        ##     client_uid, document_uid))
+        document = self._get_document(document_uid)
+        return [i for i in xrange(len(document.rows)) \
+            if not document.is_locked_by(client_uid, i)]
 
 if __name__ == '__main__':
     import Pyro4
